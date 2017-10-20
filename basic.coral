@@ -1,0 +1,121 @@
+
+#################
+# Miscellaneous #
+#################
+
+id X = X
+
+
+
+#########
+# Logic #
+#########
+
+not f = t
+not t = f
+
+or f f = f
+or f t = t
+or t f = t
+or t t = t
+
+and f f = f
+and f t = f
+and t f = f
+and t t = t
+
+if t A B = A
+if f A B = B
+
+
+
+############
+# Integers #
+############
+
+int 0 = 0
+int 1 = s (int 0)
+int 2 = s (int 1)
+int 3 = s (int 2)
+int 4 = s (int 3)
+int 5 = s (int 4)
+int 6 = s (int 5)
+int 7 = s (int 6)
+int 8 = s (int 7)
+int 9 = s (int 8)
+int 10 = s (int 9)
+
++ A 0 = A
++ A (s B) = + (s A) B
+
+- 0 B = 0
+- A 0 = A
+- (s A) (s B) = - A B
+
+* A 0 = 0
+* A (s B) = + A (* A B)
+
+/ A 0 = inf
+/ 0 B = 0
+/ A (s 0) = A
+/ A B = s (/ (- A B) B)
+
+^ A 0 = (s 0)
+^ A (s B) = * A (^ A B)
+
+eq 0 0 = t
+eq 0 (s A) = f
+eq (s A) 0 = f
+eq (s A) (s B) = eq A B
+
+gt 0 0 = f
+gt (s A) 0 = t
+gt 0 (s B) = f
+gt (s A) (s B) = gt A B
+
+ge 0 0 = t
+ge (s A) 0 = t
+ge 0 (s B) = f
+ge (s A) (s B) = ge A B
+
+lt 0 0 = f
+lt (s A) 0 = f
+lt 0 (s B) = t
+lt (s A) (s B) = lt A B
+
+le 0 0 = t
+le (s A) 0 = f
+le 0 (s B) = t
+le (s A) (s B) = le A B
+
+
+
+#########
+# Lists #
+#########
+
+p A = p A []
+
+list A .. = p A (list ..)
+list A = p A []
+
+first (p A B) = A
+rest (p A B) = B
+
+range A B = if (le A B) (p A (range (s A) B)) []
+
+map F (p A B) = p (F A) (map F B)
+map F [] = []
+
+zip (p A As) (p B Bs) = p (p A B) (zip As Bs)
+zip (p A As) [] = []
+zip [] (p B Bs) = []
+zip [] [] = []
+
+fold F I (p A As) = fold F (F I A) As
+fold F I [] = I
+
+select F (p A As) = if (F A) (p A (select F As)) (select F As)
+select F [] = []
+
+# select (lt (int 5)) (p (int 0) (p (int 6) (p (int 2) (p (int 5) []))))
