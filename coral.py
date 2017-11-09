@@ -1,167 +1,30 @@
-
 '''
 The Coral Interpreter
 Written by Curtis Bechtel
-Inspired by the Anemone language
-
-Coral is a functional language based on pattern-matching and term-rewriting. In
-appearance, Coral is similar to languages like Lisp, Scheme, and Clojure, but
-it functions very differently. Rather than applying functions to literals, it
-takes a group of atoms (literals) and reduces it according to a user-defined set
-of rules.
-
-All statements in Coral are written as follows:
-    <pattern> = <result>
-
-This statement can be read as "<pattern> yields <result>". It represents a
-single reduction rule that the interpreter can apply to a term. Rules can only
-be loaded into the interpreter from files (libraries).
-
-The only datatype in Coral is the atom. Integers, floats, lists, and other
-high-order data types must be simulated by groups of atoms and rules.
-
-For example, the file math.coral might contain:
-    
-    zero = 0
-    one = s 0
-    two = s (s 0)
-    three = s (s (s 0))
-    
-    + A 0 = A
-    + A (s B) = + (s A) B
-    
-    * A 0 = 0
-    * A (s B) = + A (* A B)
-    
-We can then load this file into the interpreter and give it terms to reduce:
-    >>> * two three
-    (s (s (s (s (s (s 0))))))
-    >>> + three one
-    (s (s (s (s 0))))
-    >>> * two zero
-    0
-
 '''
 
 from queue import Queue
 
-ATOM = 0
-VAR = 1
-GROUP = 2
 
-class Term:
-    '''An atom, variable, or aplication group'''
-    def __init__(self, val, type):
-        self.val = val
-        self.type = type
-    def __repr__(self):
-        return self.__str__()
-    def __str__(self):
-        if is_atom(self) or is_var(self):
-            return self.val
-        return '(' + ' '.join(map(str, self.val)) + ')'
 
-def is_atom(term):
-    return term.type == ATOM
 
-def is_var(term):
-    return term.type == VAR
 
-def is_group(term):
-    return term.type == GROUP
+########################
+# Tokenizer and Parser #
+########################
 
-def clone(term):
-    '''Creates and returns a deep clone of a term'''
-    if is_atom(term):
-        return Term(term.val, ATOM)
-    elif is_var(term):
-        return Term(term.val, VAR)
-    else:
-        return Term([clone(child) for child in term.val], GROUP)
+whitespace = {' ', '\n', '\t'}
+symbols = {'(', ')', '=', '#'}
+non_word = symbols.union(whitespace)
 
-def replace(term, table):
-    '''Replaces all variables with their respective terms from the table'''
-    if is_atom(term):
-        return term
-    elif is_var(term):
-        return clone(table[term.val])
-    else:
-        term.val = [replace(child, table) for child in term.val]
-        return term
+class State:
+    pass
 
-def match(pattern, term, table):
-    '''Attempts to match a term to a given patten (a term with variables)'''
-    if is_atom(pattern):
-        return is_atom(term) and pattern.val == term.val
-    elif is_var(pattern):
-        if pattern.val in table:
-            return term.val == table[pattern.val]
-        
-        table[pattern.val] = term
-        return True
-    else:
-        if not is_group(term) or len(pattern.val) != len(term.val):
-            return False
-        
-        for a, b in zip(pattern.val, term.val):
-            if not match(a, b, table):
-                return False
-        
-        return True
-
-def reduce(term, rules):
-    '''Attempts to reduce a term with the given ruleset. If it succeeds, return
-    the new term. Otherwise, return None.'''
-    
-    if is_var(term):
-        return None
-        
-    elif is_atom(term):
-        if term.val in rules:
-            for lhs, rhs in rules[term.val]:
-                if match(lhs, term, {}):
-                    return clone(rhs)
-        return None
-        
-    else:
-        if len(term.val) == 0 or not is_atom(term.val[0]):
-            return None
-        
-        first = term.val[0]
-        if first.val == 'print' and len(term.val) == 2:
-            print(str(term.val[1]))
-            return term.val[1]
-        
-        elif first.val in rules:
-            for lhs, rhs in rules[first.val]:
-                table = {}
-                if match(lhs, term, table):
-                    return replace(clone(rhs), table)
-        return None
-
-def full_reduce(initial_term, rules):
-    '''Reduces the term until no more rules can be applied.
-    
-    This function will traverse the tree of terms breadth-wise until a single
-    term can be reduced. Then it will start again at the top of the tree. When
-    it runs out of terms to reduce, the initial term is considered fully reduced
-    and is returned'''
-    
-    queue = Queue()
-    queue.put(initial_term)
-    while not queue.empty():
-        term = queue.get()
-        res = reduce(term, rules)
-        if res is None:
-            if is_group(term):
-                for child in term.val:
-                    queue.put(child)
-        else:
-            term.val = res.val
-            term.type = res.type
-            queue = Queue()
-            queue.put(initial_term)
-    return initial_term
+class ParseType:
+    '''Which type of token are we parsing'''
+    LEFT = 0   # the left hand side of a rule
+    RIGHT = 1  # the riht hand side of a rule
+    INPUT = 2  # an input term to be reduced
 
 class Token:
     '''Basic token class'''
@@ -173,24 +36,17 @@ class Token:
     def __str__(self):
         return self.val
 
-class NewLine(Token):
+class EndLineToken(Token):
     pass
 
-class Symbol(Token):
+class SymbolToken(Token):
     pass
 
-class Atom(Token):
+class AtomToken(Token):
     pass
 
-class Variable(Token):
+class VariableToken(Token):
     pass
-
-class State:
-    pass
-
-whitespace = {' ', '\n', '\t'}
-symbols = {'(', ')', '=', '#'}
-non_word = symbols.union(whitespace)
 
 def next_token(line, state, filename):
     '''Read one token from the line, given the current tokenization state'''
@@ -205,12 +61,12 @@ def next_token(line, state, filename):
     
     # check for the end of the line
     if state.c == len(line):
-        return NewLine('\n', filename, state.r, state.c)
+        return EndLineToken('\n', filename, state.r, state.c)
     
     # check for special symbols
     for sym in symbols:
         if line.startswith(sym, state.c):
-            tok = Symbol(sym, filename, state.r, state.c)
+            tok = SymbolToken(sym, filename, state.r, state.c)
             state.c += len(sym)
             return tok
     
@@ -222,9 +78,9 @@ def next_token(line, state, filename):
     # determine if word is an atom or variable
     word = line[state.c:i]
     if word[0].isupper():
-        tok = Variable(word, filename, state.r, state.c)
+        tok = VariableToken(word, filename, state.r, state.c)
     else:
-        tok = Atom(word, filename, state.r, state.c)
+        tok = AtomToken(word, filename, state.r, state.c)
     
     state.c = i
     return tok
@@ -239,7 +95,7 @@ def tokenize(f, filename):
         while state.c < len(line):
             tokens.append(next_token(line, state, filename))
         state.r += 1
-    tokens.append(NewLine('\n', filename, state.r, 0))
+    tokens.append(EndLineToken('\n', filename, state.r, 0))
     return tokens
 
 class SyntaxError(Exception):
@@ -252,96 +108,98 @@ class SyntaxError(Exception):
     def __str__(self):
         return "{} at {}:{} in '{}'".format(self.msg, self.line, self.col, self.file)
 
-def unexpected(tok):
+def unexpected(tok=None):
     '''Creates a SyntaxError for unexpected tokens'''
-    if isinstance(tok, NewLine):
+    if isinstance(tok, EndLineToken):
         return SyntaxError("Unexpected end of line", tok.file, tok.line, tok.col)
     else:
         return SyntaxError("Unexpected token '{}'".format(tok.val), tok.file, tok.line, tok.col)
 
-LEFT = 0
-RIGHT = 1
-INPUT = 2
-
-def parse_term(tokens, type, i=0):
+def parse_term(tokens, type, state=None):
     '''Parses a single term from a list of tokens.
     
     This method starts with the token at index i and attempts to parse a term of
     the given type. Valid types include LEFT for left-hand side terms, RIGHT for
     right-hand terms, and INPUT for user-input terms'''
     
-    chain = []
-    group = Term([], GROUP)
+    if state is None:
+        state = State()
+        state.i = 0
     
-    while i < len(tokens):
-        tok = tokens[i]
+    chain = []
+    group = []
+    
+    while state.i < len(tokens):
+        tok = tokens[state.i]
         
-        if isinstance(tok, Atom):
-            group.val.append(Term(tok.val, ATOM))
+        if isinstance(tok, AtomToken):
+            group.append(tok.val)
             
-        elif type == LEFT and len(group.val) == 0:
+        elif type == ParseType.LEFT and len(group) == 0:
             # first term on the left must be an atom
             raise unexpected(tok)
             
-        elif isinstance(tok, Variable):
-            if type == INPUT:
+        elif isinstance(tok, VariableToken):
+            if type == ParseType.INPUT:
                 raise unexpected(tok)
-            group.val.append(Term(tok.val, VAR))
+            group.append(tok.val)
             
-        elif isinstance(tok, NewLine):
-            if len(chain) == 0 and type != LEFT:
+        elif isinstance(tok, EndLineToken):
+            if len(chain) == 0 and type != ParseType.LEFT:
                 break
             elif len(chain) == 0:
                 raise unexpected(tok)
             
         elif tok.val == '=':
-            if len(chain) == 0 and type == LEFT:
+            if len(chain) == 0 and type == ParseType.LEFT:
                 break
             else:
                 raise unexpected(tok)
             
         elif tok.val == '(':
-            g = Term([], GROUP)
-            group.val.append(g)
+            g = []
+            group.append(g)
             chain.append(group)
             group = g
             
         elif tok.val == ')':
-            if len(chain) == 0 or len(group.val) == 0:
+            if len(chain) == 0 or len(group) == 0:
                 raise unexpected(tok)
             group = chain.pop()
             
         else:
             raise Exception('Parser error')
         
-        i += 1
+        state.i += 1
     
-    if len(chain) > 0 or len(group.val) == 0:
+    if len(chain) > 0 or len(group) == 0:
         raise unexpected(tokens[-1])
-    elif len(group.val) == 1:
-        return group.val[0], i
-    else:
-        return group, i
+    
+    if len(group) == 1:
+        return simplify(group[0])
+    
+    return simplify(group)
 
 def parse_rules(tokens, rules):
     '''Parses a set of rules and adds them to the ruleset'''
     
-    i = 0
-    while i < len(tokens):
+    state = State()
+    state.i = 0
+    while state.i < len(tokens):
         # skip newlines
-        while i < len(tokens) and isinstance(tokens[i], NewLine):
-            i += 1
+        while state.i < len(tokens) and isinstance(tokens[state.i], EndLineToken):
+            state.i += 1
         
-        if i == len(tokens):
+        if state.i == len(tokens):
             break
         
-        lhs, i = parse_term(tokens, LEFT, i)
-        i += 1
+        lhs = parse_term(tokens, ParseType.LEFT, state)
+        state.i += 1
         
-        rhs, i = parse_term(tokens, RIGHT, i)
-        i += 1
+        rhs = parse_term(tokens, ParseType.RIGHT, state)
+        state.i += 1
         
-        key = lhs.val if is_atom(lhs) else lhs.val[0].val
+        key = keyword(lhs)
         if key in rules:
             rules[key].append((lhs, rhs))
         else:
@@ -366,6 +224,171 @@ def load(filename, rules=None):
     except SyntaxError as err:
         print(err)
 
+
+
+
+
+###################
+# Virtual Machine #
+###################
+
+def isatom(term):
+    return isinstance(term, str) and not term[0].isupper()
+
+def isvar(term):
+    return isinstance(term, str) and term[0].isupper()
+
+def isapp(term):
+    return isinstance(term, list)
+
+def clone(term):
+    if isatom(term) or isvar(term):
+        return term
+    
+    else:
+        return [clone(child) for child in term]
+
+def stringify(term, inner=False):
+    if isatom(term) or isvar(term):
+        return term
+    
+    elif inner:
+        return '(' + ' '.join([stringify(child, True) for child in term]) + ')'
+    
+    else:
+        return ' '.join([stringify(child, True) for child in term])
+
+def keyword(term):
+    if isatom(term):
+        return term
+    
+    else:
+        return term[0]
+
+def replace(term, table):
+    '''Replaces variabes with their values from the table'''
+    
+    if isatom(term):
+        return term
+    
+    elif isvar(term):
+        return clone(table[term])
+    
+    else:
+        for i in range(len(term)):
+            term[i] = replace(term[i], table)
+        return term
+
+def match(pattern, term, table=None):
+    '''Attempts to match a pattern to a term, adding variable values to the
+    table as necessary. Returns True if the terms match and False otherwise'''
+    
+    if table is None: table = {}
+    
+    if isatom(pattern):
+        return isatom(term) and pattern == term
+    
+    elif isvar(pattern):
+        if pattern in table:
+            return table[pattern] == term
+        table[pattern] = term
+        return True
+    
+    else:
+        if isatom(term):
+            return pattern[0] == term
+        if len(pattern) > len(term):
+            return False
+        for a, b in zip(pattern, term):
+            if not match(a, b, table):
+                return False
+        return True
+
+def simplify(term):
+    if isapp(term) and isapp(term[0]):
+        new = simplify(term[0])
+        new.extend(term[1:])
+        return new
+    
+    elif isapp(term) and len(term) == 1:
+        return simplify(term[0])
+    
+    else:
+        return term
+
+def reduce(term, rules):
+    '''Attempts to reduce a term with the given ruleset. If it succeeds, return
+    the new term. Otherwise, return None.'''
+    
+    if isvar(term):
+        return None
+        
+    elif isatom(term):
+        if term in rules:
+            for lhs, rhs in rules[term]:
+                if match(lhs, term):
+                    return clone(rhs)
+        return None
+        
+    elif term[0] not in rules:
+        return None
+        
+    else:
+        for lhs, rhs in rules[term[0]]:
+            table = {}
+            if match(lhs, term, table):
+                if isatom(lhs):
+                    term[0] = clone(rhs)
+                    return simplify(term)
+                elif isatom(rhs) or isvar(rhs):
+                    res = [clone(rhs)]
+                    res.extend(term[len(lhs):])
+                    return simplify(replace(res, table))
+                else:
+                    res = clone(rhs)
+                    res.extend(term[len(lhs):])
+                    return simplify(replace(res, table))
+        
+        return None
+
+def full_reduce(root_term, rules):
+    '''Reduces the term until no more rules can be applied.
+    
+    This function will traverse the tree of terms breadth-wise until a single
+    term can be reduced. Then it will start again at the top of the tree. When
+    it runs out of terms to reduce, the initial term is considered fully reduced
+    and is returned'''
+    
+    queue = Queue()
+    queue.put((root_term, None, None))
+    
+    while not queue.empty():
+        term, parent, index = queue.get()
+        reduced = reduce(term, rules)
+        
+        if reduced is None:
+            if isapp(term):
+                for i in range(1, len(term)):
+                    queue.put((term[i], term, i))
+            
+        else:
+            if parent is None:
+                root_term = reduced
+            else:
+                parent[index] = reduced
+            queue = Queue()
+            queue.put((root_term, None, None))
+        
+    return root_term
+
+
+
+
+
+########
+# Main #
+########
+
 def main(args):
     '''Starts the interpreter'''
     
@@ -383,7 +406,7 @@ def main(args):
         # check for special input
         if inp in ['exit', 'quit']:
             break
-            
+        
         # reload all libraries
         elif inp == 'reload':
             rules = {}
@@ -395,9 +418,9 @@ def main(args):
         # try parsing and simplifying the entered term
         try:
             tokens = tokenize(StringIO(inp), '<stdin>')
-            term, i = parse_term(tokens, INPUT)
+            term = parse_term(tokens, ParseType.INPUT)
             term = full_reduce(term, rules)
-            print(term)
+            print(stringify(term))
         except SyntaxError as err:
             print(err)
 
