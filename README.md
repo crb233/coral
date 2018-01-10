@@ -12,7 +12,7 @@ of rules.
 All statements in Coral are written in the following form:
 `<pattern> = <result>`
 
-This statement can be read as "<pattern> yields <result>". It represents a
+This statement can be read as "\<pattern> yields \<result>". It represents a
 single reduction rule that the interpreter can apply to a term. Rules can only
 be loaded into the interpreter from files (libraries).
 
